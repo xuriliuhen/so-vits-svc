@@ -92,7 +92,7 @@ class BasePitchExtractor:
         vuv_vector[f0 > 0.0] = 1.0
         vuv_vector[f0 <= 0.0] = 0.0
         
-        # 去掉0频率, 并线性插值
+        # Remove 0 frequency and apply linear interpolation
         nzindex = torch.nonzero(f0).squeeze()
         f0 = torch.index_select(f0, dim=0, index=nzindex).cpu().numpy()
         time_org = self.hop_length / sampling_rate * nzindex.cpu().numpy()
@@ -104,7 +104,7 @@ class BasePitchExtractor:
         if f0.shape[0] == 1:
             return torch.ones(pad_to, dtype=torch.float, device=x.device) * f0[0],torch.ones(pad_to, dtype=torch.float, device=x.device)
     
-        # 大概可以用 torch 重写?
+        # Probably can be rewritten with torch?
         f0 = np.interp(time_frame, time_org, f0, left=f0[0], right=f0[-1])
         vuv_vector = vuv_vector.cpu().numpy()
         vuv_vector = np.ceil(scipy.ndimage.zoom(vuv_vector,pad_to/len(vuv_vector),order = 0))
@@ -263,17 +263,9 @@ class CrepePitchExtractor(BasePitchExtractor):
         device = None,
         model: Literal["full", "tiny"] = "full",
         use_fast_filters: bool = True,
-        decoder="viterbi"
     ):
         super().__init__(hop_length, f0_min, f0_max, keep_zeros)
-        if decoder == "viterbi":
-            self.decoder = torchcrepe.decode.viterbi
-        elif decoder == "argmax":
-            self.decoder = torchcrepe.decode.argmax
-        elif decoder == "weighted_argmax":
-            self.decoder = torchcrepe.decode.weighted_argmax
-        else:
-            raise "Unknown decoder"
+
         self.threshold = threshold
         self.model = model
         self.use_fast_filters = use_fast_filters
@@ -314,7 +306,6 @@ class CrepePitchExtractor(BasePitchExtractor):
             batch_size=1024,
             device=x.device,
             return_periodicity=True,
-            decoder=self.decoder
         )
 
         # Filter, remove silence, set uv threshold, refer to the original warehouse readme

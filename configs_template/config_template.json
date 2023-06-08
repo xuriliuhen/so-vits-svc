@@ -22,8 +22,7 @@
     "max_speclen": 512,
     "port": "8001",
     "keep_ckpts": 3,
-    "all_in_mem": false,
-    "vol_aug":false
+    "all_in_mem": false
   },
   "data": {
     "training_files": "filelists/train.txt",
@@ -53,13 +52,9 @@
     "upsample_kernel_sizes": [16,16, 4, 4, 4],
     "n_layers_q": 3,
     "use_spectral_norm": false,
-    "gin_channels": 768,
-    "ssl_dim": 768,
-    "n_speakers": 200,
-    "vocoder_name":"nsf-hifigan",
-    "speech_encoder":"vec768l12",
-    "speaker_embedding":false,
-    "vol_embedding":false
+    "gin_channels": 256,
+    "ssl_dim": 256,
+    "n_speakers": 200
   },
   "spk": {
     "nyaru": 0,

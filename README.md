@@ -1,22 +1,17 @@
 # SoftVC VITS Singing Voice Conversion
 
-[**English**](./README.md) | [**中文简体**](./README_zh_CN.md)
-
-#### ✨ A studio that contains f0 curve editor, speaker mix timeline editor and other features (The purpose of the Onnx model) : [MoeVoiceStudio(Comming soon)](https://github.com/NaruseMioShirakana/MoeVoiceStudio)
+In the field of Singing Voice Conversion, there is not only one project, SoVitsSvc, but also many other projects, which will not be listed here. The project was officially discontinued for maintenance and Archived.
+However, there are still other enthusiasts who have created their own branches and continue to maintain the SoVitsSvc project (still unrelated to SvcDevelopTeam and the repository maintainers) and have made some big changes to it for you to find out for yourself.
 
 #### ✨ A fork with a greatly improved interface: [34j/so-vits-svc-fork](https://github.com/34j/so-vits-svc-fork)
 
 #### ✨ A client supports real-time conversion: [w-okada/voice-changer](https://github.com/w-okada/voice-changer)
 
-**This project is fundamentally different from Vits. Vits is TTS and this project is SVC. TTS cannot be carried out in this project, and Vits cannot carry out SVC, and the two project models are not universal.**
-
-## Announcement
-
-The project was developed to allow the developers' favorite anime characters to sing, Anything involving real people is a departure from the intent of the developer.
+#### This project is fundamentally different from Vits. Vits is TTS and this project is SVC. TTS cannot be carried out in this project, and Vits cannot carry out SVC, and the two project models are not universal
 
 ## Disclaimer
 
-This project is an open source, offline project, and all members of SvcDevelopTeam and all developers and maintainers of this project (hereinafter referred to as contributors) have no control over this project. The contributor of this project has never provided any organization or individual with any form of assistance, including but not limited to data set extraction, data set processing, computing support, training support, infering, etc. Contributors to the project do not and cannot know what users are using the project for. Therefore, all AI models and synthesized audio based on the training of this project have nothing to do with the contributors of this project. All problems arising therefrom shall be borne by the user.
+This project is an open source, offline project, and all members of SvcDevelopTeam and all developers and maintainers of this project (hereinafter referred to as contributors) have no control over this project.  The contributor of this project has never provided any organization or individual with any form of assistance, including but not limited to data set extraction, data set processing, computing support, training support, infering, etc.  Contributors to the project do not and cannot know what users are using the project for.  Therefore, all AI models and synthesized audio based on the training of this project have nothing to do with the contributors of this project.  All problems arising therefrom shall be borne by the user.
 
 This project is run completely offline and cannot collect any user information or obtain user input data. Therefore, contributors to this project are not aware of all user input and models and therefore are not responsible for any user input.
 
@@ -33,35 +28,33 @@ This project is only a framework project, which does not have the function of sp
 5. Continuing to use this project is deemed as agreeing to the relevant provisions stated in this repository README. This repository README has the obligation to persuade, and is not responsible for any subsequent problems that may arise.
 6. If you use this project for any other plan, please contact and inform the author of this repository in advance. Thank you very much.
 
+## 🆕 Update!
+
+> Updated the 4.0-v2 model, the entire process is the same as 4.0. Compared to 4.0, there is some improvement in certain scenarios, but there are also some cases where it has regressed. Please refer to the [4.0-v2 branch](https://github.com/svc-develop-team/so-vits-svc/tree/4.0-v2) for more information.
+
+## 📝 4.0 Feature list of branches
+
+| Branch        |     Feature      |  whether compatible with the main branch model |
+| :-------------: | :----------: | :------------:    |
+| 4.0              |   main branch   |        -     |
+| 4.0v2        |  The VISinger2 model is used  |        incompatibility     |
+| 4.0-Vec768-Layer12    |  The feature input is the Layer 12 Transformer output of the Content Vec  |       incompatibility     |
+
 ## 📝 Model Introduction
 
 The singing voice conversion model uses SoftVC content encoder to extract source audio speech features, then the vectors are directly fed into VITS instead of converting to a text based intermediate; thus the pitch and intonations are conserved. Additionally, the vocoder is changed to [NSF HiFiGAN](https://github.com/openvpi/DiffSinger/tree/refactor/modules/nsf_hifigan) to solve the problem of sound interruption.
 
-### 🆕 4.1-Stable Version Update Content
+### 🆕 4.0 Version Update Content
 
-- Feature input is changed to [Content Vec](https://github.com/auspicious3000/contentvec) Transformer output of 12 layer, And compatible with 4.0 branches.
-- Update the shallow diffusion, you can use the shallow diffusion model to improve the sound quality.
-- Added Whisper speech encoder support
-- Added static/dynamic sound fusion
-- Added loudness embedding
-- Added feature Retrieve from [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)
+- Feature input is changed to [Content Vec](https://github.com/auspicious3000/contentvec)
+- The sampling rate is unified to use 44100Hz
+- Due to the change of hop size and other parameters, as well as the streamlining of some model structures, the required GPU memory for inference is **significantly reduced**. The 44kHz GPU memory usage of version 4.0 is even smaller than the 32kHz usage of version 3.0.
+- Some code structures have been adjusted
+- The dataset creation and training process are consistent with version 3.0, but the model is completely non-universal, and the data set needs to be fully pre-processed again.
+- Added an option 1: automatic pitch prediction for vc mode, which means that you don't need to manually enter the pitch key when converting speech, and the pitch of male and female voices can be automatically converted. However, this mode will cause pitch shift when converting songs.
+- Added option 2: reduce timbre leakage through k-means clustering scheme, making the timbre more similar to the target timbre.
+- Added option 3: Added [NSF-HIFIGAN Enhancer](https://github.com/yxlllc/DDSP-SVC), which has certain sound quality enhancement effect on some models with few train-sets, but has negative effect on well-trained models, so it is closed by default
   
-### 🆕 Questions about compatibility with the 4.0 model
-
-- You can support the 4.0 model by modifying the config.json of the 4.0 model, adding the speech_encoder field to the Model field of config.json, see below for details
-
-```
-  "model": {
-    .........
-    "ssl_dim": 256,
-    "n_speakers": 200,
-    "speech_encoder":"vec256l9"
-  }
-```
-
-### 🆕 About shallow diffusion
-![Diagram](shadowdiffusion.png)
-
 ## 💬 About Python Version
 
 After conducting tests, we believe that the project runs stably on `Python 3.8.9`.
@@ -70,85 +63,34 @@ After conducting tests, we believe that the project runs stably on `Python 3.8.9
 
 #### **Required**
 
-**The following encoder needs to select one to use**
-
-##### **1. If using contentvec as speech encoder(recommended)**
-
-`vec768l12` and `vec256l9` require the encoder
-
 - ContentVec: [checkpoint_best_legacy_500.pt](https://ibm.box.com/s/z1wgl1stco8ffooyatzdwsqn2psd9lrr)
-  - Place it under the `pretrain` directory
-
-Or download the following ContentVec, which is only 199MB in size but has the same effect:
-- contentvec ：[hubert_base.pt](https://huggingface.co/lj1995/VoiceConversionWebUI/resolve/main/hubert_base.pt)
-  - Change the file name to `checkpoint_best_legacy_500.pt` and place it in the `pretrain` directory
+  - Place it under the `hubert` directory
 
 ```shell
 # contentvec
-wget -P pretrain/ http://obs.cstcloud.cn/share/obs/sankagenkeshi/checkpoint_best_legacy_500.pt
+wget -P hubert/ http://obs.cstcloud.cn/share/obs/sankagenkeshi/checkpoint_best_legacy_500.pt
 # Alternatively, you can manually download and place it in the hubert directory
 ```
-
-##### **2. If hubertsoft is used as the speech encoder**
-- soft vc hubert：[hubert-soft-0d54a1f4.pt](https://github.com/bshall/hubert/releases/download/v0.1/hubert-soft-0d54a1f4.pt)
-  - Place it under the `pretrain` directory
-
-##### **3. If whisper-ppg as the encoder**
-- download model at [medium.pt](https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt), the model fits `whisper-ppg`
-- or download model at [large-v2.pt](https://openaipublic.azureedge.net/main/whisper/models/81f7c96c852ee8fc832187b0132e569d6c3065a3252ed18e56effd0b6a73e524/large-v2.pt), the model fits `whisper-ppg-large`
-  - Place it under the `pretrain` director
-  
-##### **4. If cnhubertlarge as the encoder**
-- download model at [chinese-hubert-large-fairseq-ckpt.pt](https://huggingface.co/TencentGameMate/chinese-hubert-large/resolve/main/chinese-hubert-large-fairseq-ckpt.pt)
-  - Place it under the `pretrain` director
-
-##### **5. If dphubert as the encoder**
-- download model at [DPHuBERT-sp0.75.pth](https://huggingface.co/pyf98/DPHuBERT/resolve/main/DPHuBERT-sp0.75.pth)
-  - Place it under the `pretrain` director
-
-##### **6. If OnnxHubert/ContentVec as the encoder**
-- download model at [MoeSS-SUBModel](https://huggingface.co/NaruseMioShirakana/MoeSS-SUBModel/tree/main)
-  - Place it under the `pretrain` directory
-
-#### **List of Encoders**
-- "vec768l12"
-- "vec256l9"
-- "vec256l9-onnx"
-- "vec256l12-onnx"
-- "vec768l9-onnx"
-- "vec768l12-onnx"
-- "hubertsoft-onnx"
-- "hubertsoft"
-- "whisper-ppg"
-- "cnhubertlarge"
-- "dphubert"
-- "whisper-ppg-large"
 
 #### **Optional(Strongly recommend)**
 
 - Pre-trained model files: `G_0.pth` `D_0.pth`
   - Place them under the `logs/44k` directory
 
-- Diffusion model pretraining base model file: `model_0.pt`
-  - Put it in the `logs/44k/diffusion` directory
-
-Get Sovits Pre-trained model from svc-develop-team(TBD) or anywhere else.
-
-Diffusion model references [DDSP-SVC](https://github.com/yxlllc/DDSP-SVC) diffusion model. The pre-trained diffusion model is universal with the DDSP-SVC's. You can go to [DDSP-SVC](https://github.com/yxlllc/DDSP-SVC) to get the pre-trained diffusion model.
+Get them from svc-develop-team(TBD) or anywhere else.
 
 Although the pretrained model generally does not cause any copyright problems, please pay attention to it. For example, ask the author in advance, or the author has indicated the feasible use in the description clearly.
 
 #### **Optional(Select as Required)**
 
-If you are using the `NSF-HIFIGAN enhancer` or `shallow diffusion`, you will need to download the pre-trained NSF-HIFIGAN model, or not if you do not need it.
+If you are using the NSF-HIFIGAN enhancer, you will need to download the pre-trained NSF-HIFIGAN model, or not if you do not need it.
 
 - Pre-trained NSF-HIFIGAN Vocoder: [nsf_hifigan_20221211.zip](https://github.com/openvpi/vocoders/releases/download/nsf-hifigan-v1/nsf_hifigan_20221211.zip)
   - Unzip and place the four files under the `pretrain/nsf_hifigan` directory
 
 ```shell
 # nsf_hifigan
-wget -P pretrain/ https://github.com/openvpi/vocoders/releases/download/nsf-hifigan-v1/nsf_hifigan_20221211.zip
-\unzip -od pretrain/nsf_hifigan pretrain/nsf_hifigan_20221211.zip
+https://github.com/openvpi/vocoders/releases/download/nsf-hifigan-v1/nsf_hifigan_20221211.zip
 # Alternatively, you can manually download and place it in the pretrain/nsf_hifigan directory
 # URL：https://github.com/openvpi/vocoders/releases/tag/nsf-hifigan-v1
 ```
@@ -191,113 +133,37 @@ In general, only the `Minimum Interval` needs to be adjusted. For statement audi
 
 After slicing, delete audio that is too long and too short.
 
-**If you use whisper-ppg encoder for training,the wav must shorter than 30s.**
-
 ### 1. Resample to 44100Hz and mono
 
 ```shell
 python resample.py
 ```
 
-#### Attention
-
-Although this project has the script resample.py for resampling, to mono and loudness matching, the default loudness matching is to match to 0db. This may cause damage to the sound quality. While python's loudness matching package pyloudnorm is unable to limit the level, this results in a burst. Therefore, it is suggested to consider using professional sound processing software such as `adobe audition` for loudness matching processing. If you have already used other software for loudness matching, run the command with the argument `--skip_loudnorm`:
-
-```shell
-python resample.py --skip_loudnorm
-```
-
 ### 2. Automatically split the dataset into training and validation sets, and generate configuration files.
 
 ```shell
-python preprocess_flist_config.py --speech_encoder vec768l12
-```
-
-speech_encoder has 7 choices
-
-```
-vec768l12
-vec256l9
-hubertsoft
-whisper-ppg
-cnhubertlarge
-dphubert
-whisper-ppg-large
-```
-
-If the speech_encoder argument is omitted, the default value is vec768l12
-
-**Use loudness embedding**
-
-Add `--vol_aug` if you want to enable loudness embedding:
-
-```shell
-python preprocess_flist_config.py --speech_encoder vec768l12 --vol_aug
-```
-
-After enabling loudness embedding, the trained model will match the loudness of the input source; otherwise, it will be the loudness of the training set.
-
-#### You can modify some parameters in the generated config.json and diffusion.yaml
-
-* `keep_ckpts`: Keep the last `keep_ckpts` models during training. Set to `0` will keep them all. Default is `3`.
-
-* `all_in_mem`, `cache_all_data`: Load all dataset to RAM. It can be enabled when the disk IO of some platforms is too low and the system memory is **much larger** than your dataset.
-  
-* `batch_size`: The amount of data loaded to the GPU for a single training session can be adjusted to a size lower than the video memory capacity.
-
-* `vocoder_name` : Select a vocoder. The default is `nsf-hifigan`.
-
-##### **List of Vocoders**
-
-```
-nsf-hifigan
-nsf-snake-hifigan
+python preprocess_flist_config.py
 ```
 
 ### 3. Generate hubert and f0
 
 ```shell
-python preprocess_hubert_f0.py --f0_predictor dio
-```
-
-f0_predictor has four options
-
-```
-crepe
-dio
-pm
-harvest
-```
-
-If the training set is too noisy, use crepe to handle f0
-
-If the f0_predictor parameter is omitted, the default value is dio
-
-If you want shallow diffusion (optional), you need to add the --use_diff parameter, for example
-
-```shell
-python preprocess_hubert_f0.py --f0_predictor dio --use_diff
+python preprocess_hubert_f0.py
 ```
 
 After completing the above steps, the dataset directory will contain the preprocessed data, and the dataset_raw folder can be deleted.
 
+#### You can modify some parameters in the generated config.json
+
+* `keep_ckpts`: Keep the last `keep_ckpts` models during training. Set to `0` will keep them all. Default is `3`.
+
+* `all_in_mem`: Load all dataset to RAM. It can be enabled when the disk IO of some platforms is too low and the system memory is **much larger** than your dataset.
+
 ## 🏋️‍♀️ Training
-
-### Diffusion Model (optional)
-
-If the shallow diffusion function is needed, the diffusion model needs to be trained. The diffusion model training method is as follows:
-
-```shell
-python train_diff.py -c configs/diffusion.yaml
-```
-
-### Sovits Model
 
 ```shell
 python train.py -c configs/config.json -m 44k
 ```
-
-After the model training, the model file is saved in the directory `logs/44k`, and the diffusion model is stored under `logs/44k/diffusion`
 
 ## 🤖 Inference
 
@@ -305,39 +171,24 @@ Use [inference_main.py](https://github.com/svc-develop-team/so-vits-svc/blob/4.0
 
 ```shell
 # Example
-python inference_main.py -m "logs/44k/G_30400.pth" -c "configs/config.json" -n "君の知らない物語-src.wav" -t 0 -s "nen"
+python inference_main.py -m "logs/44k/G_30400.pth" -c "configs/config.json" -s "nen" -n "君の知らない物語-src.wav" -t 0
 ```
 
 Required parameters:
-- `-m` | `--model_path`: path to the model.
-- `-c` | `--config_path`: path to the configuration file.
-- `-n` | `--clean_names`: a list of wav file names located in the raw folder.
-- `-t` | `--trans`: pitch adjustment, supports positive and negative (semitone) values.
-- `-s` | `--spk_list`: target speaker name for synthesis.
-- `-cl` | `--clip`: voice forced slicing, set to 0 to turn off(default), duration in seconds.
+- `-m` | `--model_path`: Path to the model.
+- `-c` | `--config_path`: Path to the configuration file.
+- `-s` | `--spk_list`: Target speaker name for conversion.
+- `-n` | `--clean_names`: A list of wav file names located in the raw folder.
+- `-t` | `--trans`: Pitch adjustment, supports positive and negative (semitone) values.
 
 Optional parameters: see the next section
-- `-lg` | `--linear_gradient`: The cross fade length of two audio slices in seconds. If there is a discontinuous voice after forced slicing, you can adjust this value. Otherwise, it is recommended to use the default value of 0.
-- `-f0p` | `--f0_predictor`: Select F0 predictor, can select crepe,pm,dio,harvest, default pm(note: crepe is original F0 meaning pooling)
-- `-a` | `--auto_predict_f0`: automatic pitch prediction for voice conversion, do not enable this when converting songs as it can cause serious pitch issues.
-- `-cm` | `--cluster_model_path`: Cluster model or feature retrieval index path, if there is no training cluster or feature retrieval, fill in at will.
-- `-cr` | `--cluster_infer_ratio`: The proportion of clustering scheme or feature retrieval ranges from 0 to 1. If there is no training clustering model or feature retrieval, the default is 0.
-- `-eh` | `--enhance`: Whether to use NSF_HIFIGAN enhancer, this option has certain effect on sound quality enhancement for some models with few training sets, but has negative effect on well-trained models, so it is turned off by default.
-- `-shd` | `--shallow_diffusion`: Whether to use shallow diffusion, which can solve some electrical sound problems after use. This option is turned off by default. When this option is enabled, NSF_HIFIGAN intensifier will be disabled
-- `-usm` | `--use_spk_mix`: whether to use dynamic voice/merge their role
-- `-lea` | `--loudness_envelope_adjustment`：The input source loudness envelope replaces the output loudness envelope fusion ratio. The closer to 1, the more the output loudness envelope is used
-- `-fr` | `--feature_retrieval`：Whether to use feature retrieval? If clustering model is used, it will be disabled, and cm and cr parameters will become the index path and mixing ratio of feature retrieval
-  
-Shallow diffusion settings:
-- `-dm` | `--diffusion_model_path`: Diffusion model path
-- `-dc` | `--diffusion_config_path`: Diffusion model profile path
-- `-ks` | `--k_step`: The larger the number of diffusion steps, the closer it is to the result of the diffusion model. The default is 100
-- `-od` | `--only_diffusion`: Only diffusion mode, which does not load the sovits model to the diffusion model inference
-- `-se` | `--second_encoding`：Secondary encoding, secondary coding of the original audio before shallow diffusion, mystery options, sometimes good, sometimes bad
-  
-### Attention
-
-If reasoning using `whisper-ppg` speech encoder, you need to set `--clip` to 25 and `-lg` to 1. Otherwise it will fail to reason properly.
+- `-a` | `--auto_predict_f0`: Automatic pitch prediction for voice conversion. Do not enable this when converting songs as it can cause serious pitch issues.
+- `-cl` | `--clip`: Voice forced slicing. Set to 0 to turn off(default), duration in seconds.
+- `-lg` | `--linear_gradient`: The cross fade length of two audio slices in seconds. If there is a discontinuous voice after forced slicing, you can adjust this value. Otherwise, it is recommended to use. Default 0.
+- `-cm` | `--cluster_model_path`: Path to the clustering model. Fill in any value if clustering is not trained.
+- `-cr` | `--cluster_infer_ratio`: Proportion of the clustering solution, range 0-1. Fill in 0 if the clustering model is not trained.
+- `-fmp` | `--f0_mean_pooling`: Apply mean filter (pooling) to f0, which may improve some hoarse sounds. Enabling this option will reduce inference speed.
+- `-eh` | `--enhance`: Whether to use NSF_HIFIGAN enhancer. This option has certain effect on sound quality enhancement for some models with few training sets, but has negative effect on well-trained models, so it is turned off by default.
 
 ## 🤔 Optional Settings
 
@@ -357,75 +208,21 @@ The existing steps before clustering do not need to be changed. All you need to 
 - Training process:
   - Train on a machine with good CPU performance. According to my experience, it takes about 4 minutes to train each speaker on a Tencent Cloud machine with 6-core CPU.
   - Execute `python cluster/train_cluster.py`. The output model will be saved in `logs/44k/kmeans_10000.pt`.
-  - The clustering model can currently be trained using the gpu by executing `python cluster/train_cluster.py --gpu`
 - Inference process:
   - Specify `cluster_model_path` in `inference_main.py`.
   - Specify `cluster_infer_ratio` in `inference_main.py`, where `0` means not using clustering at all, `1` means only using clustering, and usually `0.5` is sufficient.
 
-### Feature retrieval
+### F0 mean filtering
 
-Introduction: As with the clustering scheme, the timbre leakage can be reduced, the character is slightly better than clustering, but it will reduce the reasoning speed, using the fusion method, can linearly control the proportion of feature retrieval and non-feature retrieval.
+Introduction: The mean filtering of F0 can effectively reduce the hoarse sound caused by the predicted fluctuation of pitch (the hoarse sound caused by reverb or harmony can not be eliminated temporarily). This function has been greatly improved on some songs. However, some songs are out of tune. If the song appears dumb after reasoning, it can be considered to open.
 
-- Training process：
-  First, it needs to be executed after generating hubert and f0：
+- Set `f0_mean_pooling` to true in `inference_main.py`
 
-```shell
-python train_index.py -c configs/config.json
-```
+### [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/svc-develop-team/so-vits-svc/blob/4.0/sovits4_for_colab.ipynb) [sovits4_for_colab.ipynb](https://colab.research.google.com/github/svc-develop-team/so-vits-svc/blob/4.0/sovits4_for_colab.ipynb)
 
-The output of the model will be in `logs/44k/feature_and_index.pkl`
+**[23/03/16] No longer need to download hubert manually**
 
-- Inference process：
-  - The `--feature_retrieval` needs to be formulated first, and the clustering mode automatically switches to the feature retrieval mode.
-  - Specify `cluster_model_path` in `inference_main.py`.
-  - Specify `cluster_infer_ratio` in `inference_main.py`, where `0` means not using feature retrieval at all, `1` means only using feature retrieval, and usually `0.5` is sufficient.
-
-### [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/svc-develop-team/so-vits-svc/blob/4.1-Stable/sovits4_for_colab.ipynb) [sovits4_for_colab.ipynb](https://colab.research.google.com/github/svc-develop-team/so-vits-svc/blob/4.1-Stable/sovits4_for_colab.ipynb)
-
-## 🗜️ Model strip
-
-The generated model contains data that is needed for further training. If you confirm that the model is final and not be used in further training, it is safe to strip these data to get smaller file size (about 1/3).
-
-```shell
-# Example
-python compress_model.py -c="configs/config.json" -i="logs/44k/G_30400.pth" -o="logs/44k/release.pth"
-```
-
-## 👨‍🔧 Timbre mixing
-
-### Stable Timbre mixing
-
-**Refer to `webui.py` file for stable Timbre mixing of the gadget/lab feature.**
-
-Introduction: This function can combine multiple sound models into one sound model (convex combination or linear combination of multiple model parameters) to create sound lines that do not exist in reality
-
-**Note:**
-1. This function only supports single-speaker models
-2. If the multi-speaker model is forced to be used, it is necessary to ensure that the number of speakers in multiple models is the same, so that the voices under the same SpaekerID can be mixed
-3. Ensure that the model fields in config.json of all models to be mixed are the same
-4. The output hybrid model can use any config.json of the model to be synthesized, but the clustering model will not be used
-5. When batch uploading models, it is best to put the models into a folder and upload them together after selecting them
-6. It is suggested to adjust the mixing ratio between 0 and 100, or to other numbers, but unknown effects will occur in the linear combination mode
-7. After mixing, the file named output.pth will be saved in the root directory of the project
-8. Convex combination mode will perform Softmax to add the mix ratio to 1, while linear combination mode will not
-
-### Dynamic timbre mixing
-
-**Refer to the `spkmix.py` file for an introduction to dynamic timbre mixing**
-
-Character mix track writing rules:
-
-Role ID: \[\[Start time 1, end time 1, start value 1, start value 1], [Start time 2, end time 2, start value 2]]
-
-The start time must be the same as the end time of the previous one. The first start time must be 0, and the last end time must be 1 (time ranges from 0 to 1).
-
-All roles must be filled in. For unused roles, fill \[\[0., 1., 0., 0.]]
-
-The fusion value can be filled in arbitrarily, and the linear change from the start value to the end value within the specified period of time. The 
-
-internal linear combination will be automatically guaranteed to be 1 (convex combination condition), so it can be used safely
-
-Use the `--use_spk_mix` parameter when reasoning to enable dynamic timbre mixing
+**[23/04/14] Support NSF_HIFIGAN enhancer**
 
 ## 📤 Exporting to Onnx
 
@@ -434,11 +231,18 @@ Use [onnx_export.py](https://github.com/svc-develop-team/so-vits-svc/blob/4.0/on
 - Create a folder named `checkpoints` and open it
 - Create a folder in the `checkpoints` folder as your project folder, naming it after your project, for example `aziplayer`
 - Rename your model as `model.pth`, the configuration file as `config.json`, and place them in the `aziplayer` folder you just created
-- Modify `"NyaruTaffy"` in `path = "NyaruTaffy"` in [onnx_export.py](https://github.com/svc-develop-team/so-vits-svc/blob/4.0/onnx_export.py) to your project name, `path = "aziplayer"`（onnx_export_speaker_mix makes you can mix speaker's voice）
+- Modify `"NyaruTaffy"` in `path = "NyaruTaffy"` in [onnx_export.py](https://github.com/svc-develop-team/so-vits-svc/blob/4.0/onnx_export.py) to your project name, `path = "aziplayer"`
 - Run [onnx_export.py](https://github.com/svc-develop-team/so-vits-svc/blob/4.0/onnx_export.py)
 - Wait for it to finish running. A `model.onnx` will be generated in your project folder, which is the exported model.
 
+### UI support for Onnx models
+
+- [MoeSS](https://github.com/NaruseMioShirakana/MoeSS)
+  - [Hubert4.0](https://huggingface.co/NaruseMioShirakana/MoeSS-SUBModel)
+
 Note: For Hubert Onnx models, please use the models provided by MoeSS. Currently, they cannot be exported on their own (Hubert in fairseq has many unsupported operators and things involving constants that can cause errors or result in problems with the input/output shape and results when exported.)
+
+CppDataProcess are some functions to preprocess data used in MoeSS
 
 ## ☀️ Previous contributors
 

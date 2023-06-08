@@ -9,18 +9,18 @@ import subprocess
 import warnings
 import random
 import functools
+
 import librosa
 import numpy as np
 from scipy.io.wavfile import read
 import torch
 from torch.nn import functional as F
 from modules.commons import sequence_mask
-import faiss
-import tqdm
+from hubert import hubert_model
 
 MATPLOTLIB_FLAG = False
 
-logging.basicConfig(stream=sys.stdout, level=logging.WARN)
+logging.basicConfig(stream=sys.stdout, level=logging.DEBUG)
 logger = logging
 
 f0_bin = 256
@@ -28,6 +28,41 @@ f0_max = 1100.0
 f0_min = 50.0
 f0_mel_min = 1127 * np.log(1 + f0_min / 700)
 f0_mel_max = 1127 * np.log(1 + f0_max / 700)
+
+
+# def normalize_f0(f0, random_scale=True):
+#     f0_norm = f0.clone()  # create a copy of the input Tensor
+#     batch_size, _, frame_length = f0_norm.shape
+#     for i in range(batch_size):
+#         means = torch.mean(f0_norm[i, 0, :])
+#         if random_scale:
+#             factor = random.uniform(0.8, 1.2)
+#         else:
+#             factor = 1
+#         f0_norm[i, 0, :] = (f0_norm[i, 0, :] - means) * factor
+#     return f0_norm
+# def normalize_f0(f0, random_scale=True):
+#     means = torch.mean(f0[:, 0, :], dim=1, keepdim=True)
+#     if random_scale:
+#         factor = torch.Tensor(f0.shape[0],1).uniform_(0.8, 1.2).to(f0.device)
+#     else:
+#         factor = torch.ones(f0.shape[0], 1, 1).to(f0.device)
+#     f0_norm = (f0 - means.unsqueeze(-1)) * factor.unsqueeze(-1)
+#     return f0_norm
+
+def deprecated(func):
+    """This is a decorator which can be used to mark functions
+    as deprecated. It will result in a warning being emitted
+    when the function is used."""
+    @functools.wraps(func)
+    def new_func(*args, **kwargs):
+        warnings.simplefilter('always', DeprecationWarning)  # turn off filter
+        warnings.warn("Call to deprecated function {}.".format(func.__name__),
+                      category=DeprecationWarning,
+                      stacklevel=2)
+        warnings.simplefilter('default', DeprecationWarning)  # reset filter
+        return func(*args, **kwargs)
+    return new_func
 
 def normalize_f0(f0, x_mask, uv, random_scale=True):
     # calculate means based on x_mask
@@ -44,6 +79,20 @@ def normalize_f0(f0, x_mask, uv, random_scale=True):
     if torch.isnan(f0_norm).any():
         exit(0)
     return f0_norm * x_mask
+
+def compute_f0_uv_torchcrepe(wav_numpy, p_len=None, sampling_rate=44100, hop_length=512,device=None,cr_threshold=0.05):
+    from modules.crepe import CrepePitchExtractor
+    x = wav_numpy
+    if p_len is None:
+        p_len = x.shape[0]//hop_length
+    else:
+        assert abs(p_len-x.shape[0]//hop_length) < 4, "pad length error"
+    
+    f0_min = 50
+    f0_max = 1100
+    F0Creper = CrepePitchExtractor(hop_length=hop_length,f0_min=f0_min,f0_max=f0_max,device=device,threshold=cr_threshold)
+    f0,uv = F0Creper(x[None,:].float(),sampling_rate,pad_to=p_len)
+    return f0,uv
 
 def plot_data_to_numpy(x, y):
     global MATPLOTLIB_FLAG
@@ -68,6 +117,84 @@ def plot_data_to_numpy(x, y):
     return data
 
 
+
+def interpolate_f0(f0):
+
+    data = np.reshape(f0, (f0.size, 1))
+
+    vuv_vector = np.zeros((data.size, 1), dtype=np.float32)
+    vuv_vector[data > 0.0] = 1.0
+    vuv_vector[data <= 0.0] = 0.0
+
+    ip_data = data
+
+    frame_number = data.size
+    last_value = 0.0
+    for i in range(frame_number):
+        if data[i] <= 0.0:
+            j = i + 1
+            for j in range(i + 1, frame_number):
+                if data[j] > 0.0:
+                    break
+            if j < frame_number - 1:
+                if last_value > 0.0:
+                    step = (data[j] - data[i - 1]) / float(j - i)
+                    for k in range(i, j):
+                        ip_data[k] = data[i - 1] + step * (k - i + 1)
+                else:
+                    for k in range(i, j):
+                        ip_data[k] = data[j]
+            else:
+                for k in range(i, frame_number):
+                    ip_data[k] = last_value
+        else:
+            ip_data[i] = data[i] # this may not be necessary
+            last_value = data[i]
+
+    return ip_data[:,0], vuv_vector[:,0]
+
+
+def compute_f0_parselmouth(wav_numpy, p_len=None, sampling_rate=44100, hop_length=512):
+    import parselmouth
+    x = wav_numpy
+    if p_len is None:
+        p_len = x.shape[0]//hop_length
+    else:
+        assert abs(p_len-x.shape[0]//hop_length) < 4, "pad length error"
+    time_step = hop_length / sampling_rate * 1000
+    f0_min = 50
+    f0_max = 1100
+    f0 = parselmouth.Sound(x, sampling_rate).to_pitch_ac(
+        time_step=time_step / 1000, voicing_threshold=0.6,
+        pitch_floor=f0_min, pitch_ceiling=f0_max).selected_array['frequency']
+
+    pad_size=(p_len - len(f0) + 1) // 2
+    if(pad_size>0 or p_len - len(f0) - pad_size>0):
+        f0 = np.pad(f0,[[pad_size,p_len - len(f0) - pad_size]], mode='constant')
+    return f0
+
+def resize_f0(x, target_len):
+    source = np.array(x)
+    source[source<0.001] = np.nan
+    target = np.interp(np.arange(0, len(source)*target_len, len(source))/ target_len, np.arange(0, len(source)), source)
+    res = np.nan_to_num(target)
+    return res
+
+def compute_f0_dio(wav_numpy, p_len=None, sampling_rate=44100, hop_length=512):
+    import pyworld
+    if p_len is None:
+        p_len = wav_numpy.shape[0]//hop_length
+    f0, t = pyworld.dio(
+        wav_numpy.astype(np.double),
+        fs=sampling_rate,
+        f0_ceil=800,
+        frame_period=1000 * hop_length / sampling_rate,
+    )
+    f0 = pyworld.stonemask(wav_numpy.astype(np.double), f0, t, sampling_rate)
+    for index, pitch in enumerate(f0):
+        f0[index] = round(pitch, 1)
+    return resize_f0(f0, p_len)
+
 def f0_to_coarse(f0):
   is_torch = isinstance(f0, torch.Tensor)
   f0_mel = 1127 * (1 + f0 / 700).log() if is_torch else 1127 * np.log(1 + f0 / 700)
@@ -79,69 +206,44 @@ def f0_to_coarse(f0):
   assert f0_coarse.max() <= 255 and f0_coarse.min() >= 1, (f0_coarse.max(), f0_coarse.min())
   return f0_coarse
 
+
+def get_hubert_model():
+  vec_path = "hubert/checkpoint_best_legacy_500.pt"
+  print("load model(s) from {}".format(vec_path))
+  from fairseq import checkpoint_utils
+  models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task(
+    [vec_path],
+    suffix="",
+  )
+  model = models[0]
+  model.eval()
+  return model
+
+def get_hubert_content(hmodel, wav_16k_tensor):
+  feats = wav_16k_tensor
+  if feats.dim() == 2:  # double channels
+    feats = feats.mean(-1)
+  assert feats.dim() == 1, feats.dim()
+  feats = feats.view(1, -1)
+  padding_mask = torch.BoolTensor(feats.shape).fill_(False)
+  inputs = {
+    "source": feats.to(wav_16k_tensor.device),
+    "padding_mask": padding_mask.to(wav_16k_tensor.device),
+    "output_layer": 9,  # layer 9
+  }
+  with torch.no_grad():
+    logits = hmodel.extract_features(**inputs)
+    feats = hmodel.final_proj(logits[0])
+  return feats.transpose(1, 2)
+
+
 def get_content(cmodel, y):
     with torch.no_grad():
         c = cmodel.extract_features(y.squeeze(1))[0]
     c = c.transpose(1, 2)
     return c
 
-def get_f0_predictor(f0_predictor,hop_length,sampling_rate,**kargs):
-    if f0_predictor == "pm":
-        from modules.F0Predictor.PMF0Predictor import PMF0Predictor
-        f0_predictor_object = PMF0Predictor(hop_length=hop_length,sampling_rate=sampling_rate)
-    elif f0_predictor == "crepe":
-        from modules.F0Predictor.CrepeF0Predictor import CrepeF0Predictor
-        f0_predictor_object = CrepeF0Predictor(hop_length=hop_length,sampling_rate=sampling_rate,device=kargs["device"],threshold=kargs["threshold"])
-    elif f0_predictor == "harvest":
-        from modules.F0Predictor.HarvestF0Predictor import HarvestF0Predictor
-        f0_predictor_object = HarvestF0Predictor(hop_length=hop_length,sampling_rate=sampling_rate)
-    elif f0_predictor == "dio":
-        from modules.F0Predictor.DioF0Predictor import DioF0Predictor
-        f0_predictor_object = DioF0Predictor(hop_length=hop_length,sampling_rate=sampling_rate)
-    else:
-        raise Exception("Unknown f0 predictor")
-    return f0_predictor_object
 
-def get_speech_encoder(speech_encoder,device=None,**kargs):
-    if speech_encoder == "vec768l12":
-        from vencoder.ContentVec768L12 import ContentVec768L12
-        speech_encoder_object = ContentVec768L12(device = device)
-    elif speech_encoder == "vec256l9":
-        from vencoder.ContentVec256L9 import ContentVec256L9
-        speech_encoder_object = ContentVec256L9(device = device)
-    elif speech_encoder == "vec256l9-onnx":
-        from vencoder.ContentVec256L9_Onnx import ContentVec256L9_Onnx
-        speech_encoder_object = ContentVec256L9_Onnx(device = device)
-    elif speech_encoder == "vec256l12-onnx":
-        from vencoder.ContentVec256L12_Onnx import ContentVec256L12_Onnx
-        speech_encoder_object = ContentVec256L12_Onnx(device = device)
-    elif speech_encoder == "vec768l9-onnx":
-        from vencoder.ContentVec768L9_Onnx import ContentVec768L9_Onnx
-        speech_encoder_object = ContentVec768L9_Onnx(device = device)
-    elif speech_encoder == "vec768l12-onnx":
-        from vencoder.ContentVec768L12_Onnx import ContentVec768L12_Onnx
-        speech_encoder_object = ContentVec768L12_Onnx(device = device)
-    elif speech_encoder == "hubertsoft-onnx":
-        from vencoder.HubertSoft_Onnx import HubertSoft_Onnx
-        speech_encoder_object = HubertSoft_Onnx(device = device)
-    elif speech_encoder == "hubertsoft":
-        from vencoder.HubertSoft import HubertSoft
-        speech_encoder_object = HubertSoft(device = device)
-    elif speech_encoder == "whisper-ppg":
-        from vencoder.WhisperPPG import WhisperPPG
-        speech_encoder_object = WhisperPPG(device = device)
-    elif speech_encoder == "cnhubertlarge":
-        from vencoder.CNHubertLarge import CNHubertLarge
-        speech_encoder_object = CNHubertLarge(device = device)
-    elif speech_encoder == "dphubert":
-        from vencoder.DPHubert import DPHubert
-        speech_encoder_object = DPHubert(device = device)
-    elif speech_encoder == "whisper-ppg-large":
-        from vencoder.WhisperPPGLarge import WhisperPPGLarge
-        speech_encoder_object = WhisperPPGLarge(device = device)
-    else:
-        raise Exception("Unknown speech encoder")
-    return speech_encoder_object 
 
 def load_checkpoint(checkpoint_path, model, optimizer=None, skip_optimizer=False):
     assert os.path.isfile(checkpoint_path)
@@ -295,7 +397,7 @@ def load_filepaths_and_text(filename, split="|"):
 
 def get_hparams(init=True):
   parser = argparse.ArgumentParser()
-  parser.add_argument('-c', '--config', type=str, default="./configs/config.json",
+  parser.add_argument('-c', '--config', type=str, default="./configs/base.json",
                       help='JSON file for configuration')
   parser.add_argument('-m', '--model', type=str, required=True,
                       help='Model name')
@@ -338,6 +440,7 @@ def get_hparams_from_file(config_path):
   with open(config_path, "r") as f:
     data = f.read()
   config = json.loads(data)
+
   hparams =HParams(**config)
   return hparams
 
@@ -407,60 +510,6 @@ def mix_model(model_paths,mix_rate,mode):
   torch.save(model_tem,os.path.join(os.path.curdir,"output.pth"))
   return os.path.join(os.path.curdir,"output.pth")
   
-def change_rms(data1, sr1, data2, sr2, rate):  # 1是输入音频，2是输出音频,rate是2的占比 from RVC
-    # print(data1.max(),data2.max())
-    rms1 = librosa.feature.rms(
-        y=data1, frame_length=sr1 // 2 * 2, hop_length=sr1 // 2
-    )  # 每半秒一个点
-    rms2 = librosa.feature.rms(y=data2.detach().cpu().numpy(), frame_length=sr2 // 2 * 2, hop_length=sr2 // 2)
-    rms1 = torch.from_numpy(rms1).to(data2.device)
-    rms1 = F.interpolate(
-        rms1.unsqueeze(0), size=data2.shape[0], mode="linear"
-    ).squeeze()
-    rms2 = torch.from_numpy(rms2).to(data2.device)
-    rms2 = F.interpolate(
-        rms2.unsqueeze(0), size=data2.shape[0], mode="linear"
-    ).squeeze()
-    rms2 = torch.max(rms2, torch.zeros_like(rms2) + 1e-6)
-    data2 *= (
-        torch.pow(rms1, torch.tensor(1 - rate))
-        * torch.pow(rms2, torch.tensor(rate - 1))
-    )
-    return data2
-
-def train_index(spk_name,root_dir = "dataset/44k/"):  #from: RVC https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI
-    print("The feature index is constructing.")
-    exp_dir = os.path.join(root_dir,spk_name)
-    listdir_res = []
-    for file in os.listdir(exp_dir):
-       if ".wav.soft.pt" in file:
-          listdir_res.append(os.path.join(exp_dir,file))
-    if len(listdir_res) == 0:
-        raise Exception("You need to run preprocess_hubert_f0.py!")
-    npys = []
-    for name in sorted(listdir_res):
-        phone = torch.load(name)[0].transpose(-1,-2).numpy()
-        npys.append(phone)
-    big_npy = np.concatenate(npys, 0)
-    big_npy_idx = np.arange(big_npy.shape[0])
-    np.random.shuffle(big_npy_idx)
-    big_npy = big_npy[big_npy_idx]
-    n_ivf = min(int(16 * np.sqrt(big_npy.shape[0])), big_npy.shape[0] // 39)
-    index = faiss.index_factory(big_npy.shape[1] , "IVF%s,Flat" % n_ivf)
-    index_ivf = faiss.extract_index_ivf(index)  #
-    index_ivf.nprobe = 1
-    index.train(big_npy)
-    batch_size_add = 8192
-    for i in range(0, big_npy.shape[0], batch_size_add):
-        index.add(big_npy[i : i + batch_size_add])
-    # faiss.write_index(
-    #     index,
-    #     f"added_{spk_name}.index"
-    # )
-    print("Successfully build index")
-    return index
-
-
 class HParams():
   def __init__(self, **kwargs):
     for k, v in kwargs.items():
@@ -492,19 +541,3 @@ class HParams():
   def __repr__(self):
     return self.__dict__.__repr__()
 
-  def get(self,index):
-    return self.__dict__.get(index)
-
-class Volume_Extractor:
-    def __init__(self, hop_size = 512):
-        self.hop_size = hop_size
-        
-    def extract(self, audio): # audio: 2d tensor array
-        if not isinstance(audio,torch.Tensor):
-           audio = torch.Tensor(audio)
-        n_frames = int(audio.size(-1) // self.hop_size)
-        audio2 = audio ** 2
-        audio2 = torch.nn.functional.pad(audio2, (int(self.hop_size // 2), int((self.hop_size + 1) // 2)), mode = 'reflect')
-        volume = torch.FloatTensor([torch.mean(audio2[:,int(n * self.hop_size) : int((n + 1) * self.hop_size)]) for n in range(n_frames)])
-        volume = torch.sqrt(volume)
-        return volume

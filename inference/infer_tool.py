@@ -11,17 +11,15 @@ import gc
 import librosa
 import numpy as np
 # import onnxruntime
+import parselmouth
 import soundfile
 import torch
 import torchaudio
 
 import cluster
+from hubert import hubert_model
 import utils
 from models import SynthesizerTrn
-import pickle
-
-from diffusion.unit2mel import load_model_vocoder
-import yaml
 
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 
@@ -118,78 +116,29 @@ class Svc(object):
     def __init__(self, net_g_path, config_path,
                  device=None,
                  cluster_model_path="logs/44k/kmeans_10000.pt",
-                 nsf_hifigan_enhance = False,
-                 diffusion_model_path="logs/44k/diffusion/model_0.pt",
-                 diffusion_config_path="configs/diffusion.yaml",
-                 shallow_diffusion = False,
-                 only_diffusion = False,
-                 spk_mix_enable = False,
-                 feature_retrieval = False
+                 nsf_hifigan_enhance = False
                  ):
         self.net_g_path = net_g_path
-        self.only_diffusion = only_diffusion
-        self.shallow_diffusion = shallow_diffusion
-        self.feature_retrieval = feature_retrieval
         if device is None:
             self.dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.dev = torch.device(device)
         self.net_g_ms = None
-        if not self.only_diffusion:
-            self.hps_ms = utils.get_hparams_from_file(config_path)
-            self.target_sample = self.hps_ms.data.sampling_rate
-            self.hop_size = self.hps_ms.data.hop_length
-            self.spk2id = self.hps_ms.spk
-            try:
-                self.vol_embedding = self.hps_ms.model.vol_embedding
-            except Exception as e:
-                self.vol_embedding = False
-            try:
-                self.speech_encoder = self.hps_ms.model.speech_encoder
-            except Exception as e:
-                self.speech_encoder = 'vec768l12'
-
+        self.hps_ms = utils.get_hparams_from_file(config_path)
+        self.target_sample = self.hps_ms.data.sampling_rate
+        self.hop_size = self.hps_ms.data.hop_length
+        self.spk2id = self.hps_ms.spk
         self.nsf_hifigan_enhance = nsf_hifigan_enhance
-        if self.shallow_diffusion or self.only_diffusion:
-            if os.path.exists(diffusion_model_path) and os.path.exists(diffusion_model_path):
-                self.diffusion_model,self.vocoder,self.diffusion_args = load_model_vocoder(diffusion_model_path,self.dev,config_path=diffusion_config_path)
-                if self.only_diffusion:
-                    self.target_sample = self.diffusion_args.data.sampling_rate
-                    self.hop_size = self.diffusion_args.data.block_size
-                    self.spk2id = self.diffusion_args.spk
-                    self.speech_encoder = self.diffusion_args.data.encoder
-                if spk_mix_enable:
-                    self.diffusion_model.init_spkmix(len(self.spk2id))
-            else:
-                print("No diffusion model or config found. Shallow diffusion mode will False")
-                self.shallow_diffusion = self.only_diffusion = False
-                
-        # load hubert and model
-        if not self.only_diffusion:
-            self.load_model(spk_mix_enable)
-            self.hubert_model = utils.get_speech_encoder(self.speech_encoder,device=self.dev)
-            self.volume_extractor = utils.Volume_Extractor(self.hop_size)
-        else:
-            self.hubert_model = utils.get_speech_encoder(self.diffusion_args.data.encoder,device=self.dev)
-            self.volume_extractor = utils.Volume_Extractor(self.diffusion_args.data.block_size)
-            
+        # load hubert
+        self.hubert_model = utils.get_hubert_model().to(self.dev)
+        self.load_model()
         if os.path.exists(cluster_model_path):
-            if self.feature_retrieval:
-                with open(cluster_model_path,"rb") as f:
-                    self.cluster_model = pickle.load(f)
-                self.big_npy = None
-                self.now_spk_id = -1
-            else:
-                self.cluster_model = cluster.get_cluster_model(cluster_model_path)
-        else:
-            self.feature_retrieval=False
-
-        if self.shallow_diffusion : self.nsf_hifigan_enhance = False
+            self.cluster_model = cluster.get_cluster_model(cluster_model_path)
         if self.nsf_hifigan_enhance:
             from modules.enhancer import Enhancer
             self.enhancer = Enhancer('nsf-hifigan', 'pretrain/nsf_hifigan/model',device=self.dev)
-            
-    def load_model(self, spk_mix_enable=False):
+
+    def load_model(self):
         # get model configuration
         self.net_g_ms = SynthesizerTrn(
             self.hps_ms.data.filter_length // 2 + 1,
@@ -200,53 +149,40 @@ class Svc(object):
             _ = self.net_g_ms.half().eval().to(self.dev)
         else:
             _ = self.net_g_ms.eval().to(self.dev)
-        if spk_mix_enable:
-            self.net_g_ms.EnableCharacterMix(len(self.spk2id), self.dev)
 
-    def get_unit_f0(self, wav, tran, cluster_infer_ratio, speaker, f0_filter ,f0_predictor,cr_threshold=0.05):
 
-        f0_predictor_object = utils.get_f0_predictor(f0_predictor,hop_length=self.hop_size,sampling_rate=self.target_sample,device=self.dev,threshold=cr_threshold)
-        
-        f0, uv = f0_predictor_object.compute_f0_uv(wav)
-        if f0_filter and sum(f0) == 0:
-            raise F0FilterException("No voice detected")
-        f0 = torch.FloatTensor(f0).to(self.dev)
-        uv = torch.FloatTensor(uv).to(self.dev)
+
+    def get_unit_f0(self, in_path, tran, cluster_infer_ratio, speaker, f0_filter ,F0_mean_pooling,cr_threshold=0.05):
+
+        wav, sr = librosa.load(in_path, sr=self.target_sample)
+
+        if F0_mean_pooling == True:
+            f0, uv = utils.compute_f0_uv_torchcrepe(torch.FloatTensor(wav), sampling_rate=self.target_sample, hop_length=self.hop_size,device=self.dev,cr_threshold = cr_threshold)
+            if f0_filter and sum(f0) == 0:
+                raise F0FilterException("No voice detected")
+            f0 = torch.FloatTensor(list(f0))
+            uv = torch.FloatTensor(list(uv))
+        if F0_mean_pooling == False:
+            f0 = utils.compute_f0_parselmouth(wav, sampling_rate=self.target_sample, hop_length=self.hop_size)
+            if f0_filter and sum(f0) == 0:
+                raise F0FilterException("No voice detected")
+            f0, uv = utils.interpolate_f0(f0)
+            f0 = torch.FloatTensor(f0)
+            uv = torch.FloatTensor(uv)
 
         f0 = f0 * 2 ** (tran / 12)
-        f0 = f0.unsqueeze(0)
-        uv = uv.unsqueeze(0)
+        f0 = f0.unsqueeze(0).to(self.dev)
+        uv = uv.unsqueeze(0).to(self.dev)
 
         wav16k = librosa.resample(wav, orig_sr=self.target_sample, target_sr=16000)
         wav16k = torch.from_numpy(wav16k).to(self.dev)
-        c = self.hubert_model.encoder(wav16k)
+        c = utils.get_hubert_content(self.hubert_model, wav_16k_tensor=wav16k)
         c = utils.repeat_expand_2d(c.squeeze(0), f0.shape[1])
 
         if cluster_infer_ratio !=0:
-            if self.feature_retrieval:
-                speaker_id = self.spk2id.get(speaker)
-                if speaker_id is None:
-                    raise RuntimeError("The name you entered is not in the speaker list!")
-                if not speaker_id and type(speaker) is int:
-                    if len(self.spk2id.__dict__) >= speaker:
-                        speaker_id = speaker
-                feature_index = self.cluster_model[speaker_id]
-                feat_np = c.transpose(0,1).cpu().numpy()
-                if self.big_npy is None or self.now_spk_id != speaker_id:
-                   self.big_npy = feature_index.reconstruct_n(0, feature_index.ntotal)
-                   self.now_spk_id = speaker_id
-                print("starting feature retrieval...")
-                score, ix = feature_index.search(feat_np, k=8)
-                weight = np.square(1 / score)
-                weight /= weight.sum(axis=1, keepdims=True)
-                npy = np.sum(self.big_npy[ix] * np.expand_dims(weight, axis=2), axis=1)
-                c = cluster_infer_ratio * npy + (1 - cluster_infer_ratio) * feat_np
-                c = torch.FloatTensor(c).to(self.dev).transpose(0,1)
-                print("end feature retrieval...")
-            else:
-                cluster_c = cluster.get_cluster_center_result(self.cluster_model, c.cpu().numpy().T, speaker).T
-                cluster_c = torch.FloatTensor(cluster_c).to(self.dev)
-                c = cluster_infer_ratio * cluster_c + (1 - cluster_infer_ratio) * c
+            cluster_c = cluster.get_cluster_center_result(self.cluster_model, c.cpu().numpy().T, speaker).T
+            cluster_c = torch.FloatTensor(cluster_c).to(self.dev)
+            c = cluster_infer_ratio * cluster_c + (1 - cluster_infer_ratio) * c
 
         c = c.unsqueeze(0)
         return c, f0, uv
@@ -256,76 +192,32 @@ class Svc(object):
               auto_predict_f0=False,
               noice_scale=0.4,
               f0_filter=False,
-              f0_predictor='pm',
+              F0_mean_pooling=False,
               enhancer_adaptive_key = 0,
-              cr_threshold = 0.05,
-              k_step = 100,
-              frame = 0,
-              spk_mix = False,
-              second_encoding = False,
-              loudness_envelope_adjustment = 1
+              cr_threshold = 0.05
               ):
-        wav, sr = librosa.load(raw_path, sr=self.target_sample)
-        if spk_mix:
-            c, f0, uv = self.get_unit_f0(wav, tran, 0, None, f0_filter,f0_predictor,cr_threshold=cr_threshold)
-            n_frames = f0.size(1)
-            sid = speaker[:, frame:frame+n_frames].transpose(0,1)
-        else:
-            speaker_id = self.spk2id.get(speaker)
-            if not speaker_id and type(speaker) is int:
-                if len(self.spk2id.__dict__) >= speaker:
-                    speaker_id = speaker
-            if speaker_id is None:
-                raise RuntimeError("The name you entered is not in the speaker list!")
-            sid = torch.LongTensor([int(speaker_id)]).to(self.dev).unsqueeze(0)
-            c, f0, uv = self.get_unit_f0(wav, tran, cluster_infer_ratio, speaker, f0_filter,f0_predictor,cr_threshold=cr_threshold)
-            n_frames = f0.size(1)
+
+        speaker_id = self.spk2id.__dict__.get(speaker)
+        if not speaker_id and type(speaker) is int:
+            if len(self.spk2id.__dict__) >= speaker:
+                speaker_id = speaker
+        sid = torch.LongTensor([int(speaker_id)]).to(self.dev).unsqueeze(0)
+        c, f0, uv = self.get_unit_f0(raw_path, tran, cluster_infer_ratio, speaker, f0_filter,F0_mean_pooling,cr_threshold=cr_threshold)
         if "half" in self.net_g_path and torch.cuda.is_available():
             c = c.half()
         with torch.no_grad():
             start = time.time()
-            vol = None
-            if not self.only_diffusion:
-                vol = self.volume_extractor.extract(torch.FloatTensor(wav).to(self.dev)[None,:])[None,:].to(self.dev) if self.vol_embedding else None
-                audio,f0 = self.net_g_ms.infer(c, f0=f0, g=sid, uv=uv, predict_f0=auto_predict_f0, noice_scale=noice_scale,vol=vol)
-                audio = audio[0,0].data.float()
-                audio_mel = self.vocoder.extract(audio[None,:],self.target_sample) if self.shallow_diffusion else None
-            else:
-                audio = torch.FloatTensor(wav).to(self.dev)
-                audio_mel = None
-            if self.only_diffusion or self.shallow_diffusion:
-                vol = self.volume_extractor.extract(audio[None,:])[None,:,None].to(self.dev) if vol==None else vol[:,:,None]
-                if self.shallow_diffusion and second_encoding:
-                    audio16k = librosa.resample(audio.detach().cpu().numpy(), orig_sr=self.target_sample, target_sr=16000)
-                    audio16k = torch.from_numpy(audio16k).to(self.dev)
-                    c = self.hubert_model.encoder(audio16k)
-                    c = utils.repeat_expand_2d(c.squeeze(0), f0.shape[1])
-                f0 = f0[:,:,None]
-                c = c.transpose(-1,-2)
-                audio_mel = self.diffusion_model(
-                c, 
-                f0, 
-                vol, 
-                spk_id = sid, 
-                spk_mix_dict = None,
-                gt_spec=audio_mel,
-                infer=True, 
-                infer_speedup=self.diffusion_args.infer.speedup, 
-                method=self.diffusion_args.infer.method,
-                k_step=k_step)
-                audio = self.vocoder.infer(audio_mel, f0).squeeze()
+            audio = self.net_g_ms.infer(c, f0=f0, g=sid, uv=uv, predict_f0=auto_predict_f0, noice_scale=noice_scale)[0,0].data.float()
             if self.nsf_hifigan_enhance:
                 audio, _ = self.enhancer.enhance(
-                                    audio[None,:], 
-                                    self.target_sample, 
-                                    f0[:,:,None], 
-                                    self.hps_ms.data.hop_length, 
-                                    adaptive_key = enhancer_adaptive_key)
-            if loudness_envelope_adjustment != 1:
-                audio = utils.change_rms(wav,self.target_sample,audio,self.target_sample,loudness_envelope_adjustment)
+                                                                        audio[None,:], 
+                                                                        self.target_sample, 
+                                                                        f0[:,:,None], 
+                                                                        self.hps_ms.data.hop_length, 
+                                                                        adaptive_key = enhancer_adaptive_key)
             use_time = time.time() - start
             print("vits use time:{}".format(use_time))
-        return audio, audio.shape[-1], n_frames
+        return audio, audio.shape[-1]
 
     def clear_empty(self):
         # clean up vram
@@ -353,19 +245,11 @@ class Svc(object):
                         clip_seconds=0,
                         lg_num=0,
                         lgr_num =0.75,
-                        f0_predictor='pm',
+                        F0_mean_pooling = False,
                         enhancer_adaptive_key = 0,
-                        cr_threshold = 0.05,
-                        k_step = 100,
-                        use_spk_mix = False,
-                        second_encoding = False,
-                        loudness_envelope_adjustment = 1
+                        cr_threshold = 0.05
                         ):
-        if use_spk_mix:
-            if len(self.spk2id) == 1:
-                spk = self.spk2id.keys()[0]
-                use_spk_mix = False
-        wav_path = Path(raw_audio_path).with_suffix('.wav')
+        wav_path = raw_audio_path
         chunks = slicer.cut(wav_path, db_thresh=slice_db)
         audio_data, audio_sr = slicer.chunks2audio(wav_path, chunks)
         per_size = int(clip_seconds*audio_sr)
@@ -374,62 +258,7 @@ class Svc(object):
         lg_size_c_l = (lg_size-lg_size_r)//2
         lg_size_c_r = lg_size-lg_size_r-lg_size_c_l
         lg = np.linspace(0,1,lg_size_r) if lg_size!=0 else 0
-
-        if use_spk_mix:
-            assert len(self.spk2id) == len(spk)
-            audio_length = 0
-            for (slice_tag, data) in audio_data:
-                aud_length = int(np.ceil(len(data) / audio_sr * self.target_sample))
-                if slice_tag:
-                    audio_length += aud_length // self.hop_size
-                    continue
-                if per_size != 0:
-                    datas = split_list_by_n(data, per_size,lg_size)
-                else:
-                    datas = [data]
-                for k,dat in enumerate(datas):
-                    pad_len = int(audio_sr * pad_seconds)
-                    per_length = int(np.ceil(len(dat) / audio_sr * self.target_sample))
-                    a_length = per_length + 2 * pad_len
-                    audio_length += a_length // self.hop_size
-            audio_length += len(audio_data)
-            spk_mix_tensor = torch.zeros(size=(len(spk), audio_length)).to(self.dev)
-            for i in range(len(spk)):
-                last_end = None
-                for mix in spk[i]:
-                    if mix[3]<0. or mix[2]<0.:
-                        raise RuntimeError("mix value must higer Than zero!")
-                    begin = int(audio_length * mix[0])
-                    end = int(audio_length * mix[1])
-                    length = end - begin
-                    if length<=0:                        
-                        raise RuntimeError("begin Must lower Than end!")
-                    step = (mix[3] - mix[2])/length
-                    if last_end is not None:
-                        if last_end != begin:
-                            raise RuntimeError("[i]EndTime Must Equal [i+1]BeginTime!")
-                    last_end = end
-                    if step == 0.:
-                        spk_mix_data = torch.zeros(length).to(self.dev) + mix[2]
-                    else:
-                        spk_mix_data = torch.arange(mix[2],mix[3],step).to(self.dev)
-                    if(len(spk_mix_data)<length):
-                        num_pad = length - len(spk_mix_data)
-                        spk_mix_data = torch.nn.functional.pad(spk_mix_data, [0, num_pad], mode="reflect").to(self.dev)
-                    spk_mix_tensor[i][begin:end] = spk_mix_data[:length]
-
-            spk_mix_ten = torch.sum(spk_mix_tensor,dim=0).unsqueeze(0).to(self.dev)
-            # spk_mix_tensor[0][spk_mix_ten<0.001] = 1.0
-            for i, x in enumerate(spk_mix_ten[0]):
-                if x == 0.0:
-                    spk_mix_ten[0][i] = 1.0
-                    spk_mix_tensor[:,i] = 1.0 / len(spk)
-            spk_mix_tensor = spk_mix_tensor / spk_mix_ten
-            if not ((torch.sum(spk_mix_tensor,dim=0) - 1.)<0.0001).all():
-                raise RuntimeError("sum(spk_mix_tensor) not equal 1")
-            spk = spk_mix_tensor
-
-        global_frame = 0
+        
         audio = []
         for (slice_tag, data) in audio_data:
             print(f'#=====segment start, {round(len(data) / audio_sr, 3)}s======')
@@ -439,7 +268,6 @@ class Svc(object):
                 print('jump empty segment')
                 _audio = np.zeros(length)
                 audio.extend(list(pad_array(_audio, length)))
-                global_frame += length // self.hop_size
                 continue
             if per_size != 0:
                 datas = split_list_by_n(data, per_size,lg_size)
@@ -454,20 +282,14 @@ class Svc(object):
                 raw_path = io.BytesIO()
                 soundfile.write(raw_path, dat, audio_sr, format="wav")
                 raw_path.seek(0)
-                out_audio, out_sr, out_frame = self.infer(spk, tran, raw_path,
+                out_audio, out_sr = self.infer(spk, tran, raw_path,
                                                     cluster_infer_ratio=cluster_infer_ratio,
                                                     auto_predict_f0=auto_predict_f0,
                                                     noice_scale=noice_scale,
-                                                    f0_predictor = f0_predictor,
+                                                    F0_mean_pooling = F0_mean_pooling,
                                                     enhancer_adaptive_key = enhancer_adaptive_key,
-                                                    cr_threshold = cr_threshold,
-                                                    k_step = k_step,
-                                                    frame = global_frame,
-                                                    spk_mix = use_spk_mix,
-                                                    second_encoding = second_encoding,
-                                                    loudness_envelope_adjustment = loudness_envelope_adjustment
+                                                    cr_threshold = cr_threshold
                                                     )
-                global_frame += out_frame
                 _audio = out_audio.cpu().numpy()
                 pad_len = int(self.target_sample * pad_seconds)
                 _audio = _audio[pad_len:-pad_len]
@@ -509,7 +331,7 @@ class RealTimeVC:
                                         auto_predict_f0=auto_predict_f0,
                                         noice_scale=noice_scale,
                                         f0_filter=f0_filter)
-            
+
             audio = audio.cpu().numpy()
             self.last_chunk = audio[-self.pre_len:]
             self.last_o = audio
@@ -530,4 +352,3 @@ class RealTimeVC:
             self.last_chunk = audio[-self.pre_len:]
             self.last_o = audio
             return ret[self.chunk_len:2 * self.chunk_len]
-            
